@@ -1,4 +1,4 @@
-﻿import os
+import os
 import sys
 import ctypes
 import tempfile
@@ -290,6 +290,256 @@ async def wallpaper_image(path: str):
     if not resolved.is_file():
         raise HTTPException(404, "File not found")
     return FileResponse(str(resolved))
+
+
+# === Timer Scheduler ===
+import asyncio
+import json
+import re
+from dataclasses import dataclass, field, asdict
+from typing import Literal
+
+TIMER_CONFIG_FILE = WALLPAPER_DIR / "timers.json"
+
+@dataclass
+class TimerConfig:
+    id: str
+    name: str = ""
+    source: Literal["url", "github"] = "url"
+    interval: int = 30  # minutes
+    enabled: bool = True
+    # URL source
+    url: str = ""
+    # GitHub source
+    repo_url: str = ""
+    path: str = ""
+    branch: str = "main"
+    last_run: float = 0
+
+    def should_run(self) -> bool:
+        if not self.enabled:
+            return False
+        if self.last_run == 0:
+            return True
+        elapsed = (asyncio.get_event_loop().time() - self.last_run) / 60
+        return elapsed >= self.interval
+
+class TimerScheduler:
+    def __init__(self):
+        self._timers: dict[str, TimerConfig] = {}
+        self._task: asyncio.Task | None = None
+        self._load()
+
+    def _load(self):
+        if TIMER_CONFIG_FILE.exists():
+            try:
+                data = json.loads(TIMER_CONFIG_FILE.read_text(encoding="utf-8"))
+                self._timers = {k: TimerConfig(**v) for k, v in data.items()}
+            except Exception:
+                self._timers = {}
+
+    def _save(self):
+        TIMER_CONFIG_FILE.write_text(
+            json.dumps({k: asdict(v) for k, v in self._timers.items()}, indent=2, ensure_ascii=False),
+            encoding="utf-8"
+        )
+
+    @property
+    def timers(self) -> list[TimerConfig]:
+        return list(self._timers.values())
+
+    def add(self, cfg: TimerConfig) -> TimerConfig:
+        self._timers[cfg.id] = cfg
+        self._save()
+        return cfg
+
+    def remove(self, timer_id: str) -> bool:
+        if timer_id in self._timers:
+            del self._timers[timer_id]
+            self._save()
+            return True
+        return False
+
+    def toggle(self, timer_id: str) -> bool:
+        if timer_id in self._timers:
+            self._timers[timer_id].enabled = not self._timers[timer_id].enabled
+            self._save()
+            return self._timers[timer_id].enabled
+        return False
+
+    async def _run_loop(self):
+        """Background loop: check timers every 10 seconds."""
+        while True:
+            await asyncio.sleep(10)
+            for cfg in list(self._timers.values()):
+                if cfg.should_run():
+                    try:
+                        await self._execute(cfg)
+                        cfg.last_run = asyncio.get_event_loop().time()
+                        self._save()
+                    except Exception:
+                        pass
+
+    async def _execute(self, cfg: TimerConfig):
+        """Execute a timer: download and set wallpaper."""
+        if cfg.source == "url":
+            await _set_wallpaper_from_url(cfg.url)
+        elif cfg.source == "github":
+            await _set_wallpaper_from_github(cfg.repo_url, cfg.path, cfg.branch)
+
+    def start(self):
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._run_loop())
+
+    def stop(self):
+        if self._task and not self._task.done():
+            self._task.cancel()
+
+
+# === Timer helper functions ===
+async def _set_wallpaper_from_url(url: str):
+    """Download image from URL and set as wallpaper (silent, no HTTPException)."""
+    try:
+        ext_map = {"image/jpeg": ".jpg", "image/png": ".png", "image/bmp": ".bmp",
+                    "image/gif": ".gif", "image/webp": ".webp"}
+        async with httpx.AsyncClient(timeout=60.0, follow_redirects=True,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "")
+            image_data = resp.content
+
+            # Handle JSON APIs
+            ext = ".jpg"
+            for mime, e in ext_map.items():
+                if mime in content_type:
+                    ext = e
+                    break
+            else:
+                try:
+                    data = resp.json() if hasattr(resp, "json") else json.loads(resp.text)
+                    def find_url(obj, d=0):
+                        if d > 5: return None
+                        if isinstance(obj, str) and re.search(r"\.(jpg|jpeg|png|bmp|gif|webp)(\?|$)", obj, re.I):
+                            return obj
+                        if isinstance(obj, dict):
+                            for k in ("url","src","image_url","download_url","raw","full","regular","large","original"):
+                                if k in obj:
+                                    r = find_url(obj[k], d+1)
+                                    if r: return r
+                        if isinstance(obj, list) and obj:
+                            return find_url(obj[0], d+1)
+                        return None
+                    img_url = find_url(data)
+                    if img_url:
+                        r2 = await client.get(img_url)
+                        r2.raise_for_status()
+                        image_data = r2.content
+                        ct2 = r2.headers.get("content-type","")
+                        for mime, e in ext_map.items():
+                            if mime in ct2: ext = e; break
+                except Exception:
+                    pass
+
+            dest = WALLPAPER_DIR / f"timer_url_{datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
+            dest.write_bytes(image_data)
+            set_wallpaper(str(dest))
+    except Exception:
+        pass
+
+async def _set_wallpaper_from_github(repo_url: str, path: str, branch: str):
+    """Download image from GitHub repo and set as wallpaper (silent)."""
+    try:
+        url = repo_url.rstrip("/")
+        parts = url.replace("https://github.com/", "").strip("/").split("/")
+        if len(parts) < 2:
+            return
+        owner, repo = parts[0], parts[1]
+        api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(api_url, params={"ref": branch},
+                headers={"Accept": "application/vnd.github.v3+json"})
+            resp.raise_for_status()
+            data = resp.json()
+
+        if isinstance(data, dict) and "download_url" in data:
+            dl_url = data["download_url"]
+            if not dl_url:
+                return
+            dl_resp = await httpx.AsyncClient(timeout=60.0).get(dl_url)
+            dl_resp.raise_for_status()
+            ext = Path(data["name"]).suffix.lower()
+            dest = WALLPAPER_DIR / f"timer_gh_{data['name']}"
+            dest.write_bytes(dl_resp.content)
+            set_wallpaper(str(dest))
+        elif isinstance(data, list):
+            # Randomly pick an image from directory
+            import random
+            images = [it for it in data if it["type"] == "file" and Path(it["name"]).suffix.lower() in IMAGE_EXTENSIONS]
+            if images:
+                item = random.choice(images)
+                dl_resp = await httpx.AsyncClient(timeout=60.0).get(item["download_url"])
+                dl_resp.raise_for_status()
+                ext = Path(item["name"]).suffix.lower()
+                dest = WALLPAPER_DIR / f"timer_gh_{item['name']}"
+                dest.write_bytes(dl_resp.content)
+                set_wallpaper(str(dest))
+    except Exception:
+        pass
+
+scheduler = TimerScheduler()
+
+class TimerStartRequest(BaseModel):
+    id: str = ""
+    name: str = ""
+    source: Literal["url", "github"] = "url"
+    interval: int = 30
+    url: str = ""
+    repo_url: str = ""
+    path: str = ""
+    branch: str = "main"
+
+
+# === Startup: launch timer scheduler ===
+@app.on_event("startup")
+async def startup_timer():
+    scheduler.start()
+
+@app.get("/api/timer/list")
+async def timer_list():
+    return {"timers": [asdict(t) for t in scheduler.timers]}
+
+@app.post("/api/timer/start")
+async def timer_start(req: TimerStartRequest):
+    import uuid
+    timer_id = req.id or str(uuid.uuid4())[:8]
+    cfg = TimerConfig(
+        id=timer_id, name=req.name, source=req.source, interval=req.interval,
+        url=req.url, repo_url=req.repo_url, path=req.path, branch=req.branch,
+        enabled=True
+    )
+    scheduler.add(cfg)
+    scheduler.start()
+    return {"success": True, "timer": asdict(cfg)}
+
+@app.post("/api/timer/toggle")
+async def timer_toggle(req: SetWallpaperRequest):
+    enabled = scheduler.toggle(req.path)  # path used as timer_id
+    return {"success": True, "enabled": enabled}
+
+@app.post("/api/timer/stop")
+async def timer_stop(req: SetWallpaperRequest):
+    scheduler.remove(req.path)  # path used as timer_id
+    return {"success": True}
+
+@app.get("/api/timer/status")
+async def timer_status():
+    return {
+        "running": scheduler._task is not None and not scheduler._task.done(),
+        "count": len(scheduler._timers),
+        "timers": [asdict(t) for t in scheduler.timers]
+    }
+
 
 
 # === Serve Vue Frontend ===

@@ -71,6 +71,13 @@ echo.
     --hidden-import pythonnet ^
     --collect-all webview ^
     --collect-all pythonnet ^
+    --hidden-import pystray ^
+    --hidden-import PIL ^
+    --hidden-import PIL.Image ^
+    --hidden-import PIL.ImageDraw ^
+    --hidden-import PIL.ImageFont ^
+    --collect-all pystray ^
+    --collect-all PIL ^
     app.py
 
 if %errorlevel% neq 0 (

@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN" color-scheme="light dark">
 <head>
 <meta charset="UTF-8">
@@ -398,6 +398,53 @@ input[type="file"]::file-selector-button {
   .preview-body { flex-direction: column; align-items: stretch; }
   .preview-img-wrap { width: 100%; }
 }
+
+/* === Timer Controls === */
+.timer-row {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 16px; padding-top: 16px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.timer-row label {
+  font-size: 13px; color: var(--text-secondary); white-space: nowrap;
+}
+.timer-row input[type="number"] {
+  width: 72px; padding: 8px 10px;
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); color: var(--text-primary);
+  font-size: 14px; text-align: center;
+}
+.timer-row .btn-timer {
+  padding: 8px 20px; border-radius: var(--radius-sm);
+  font-size: 13px; font-weight: 600; cursor: pointer;
+  border: none; transition: all 0.2s;
+}
+.btn-timer-start {
+  background: linear-gradient(135deg, var(--accent), #a29bfe);
+  color: #fff;
+}
+.btn-timer-start:hover { opacity: 0.9; transform: translateY(-1px); }
+.btn-timer-stop {
+  background: var(--danger); color: #fff;
+}
+.btn-timer-stop:hover { opacity: 0.9; }
+.timer-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 20px;
+  font-size: 12px; font-weight: 600;
+  background: rgba(0,206,201,0.15); color: var(--success);
+}
+.timer-badge::before {
+  content: ''; width: 8px; height: 8px;
+  border-radius: 50%; background: var(--success);
+  animation: pulse-dot 1.5s infinite;
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.timer-info { font-size: 12px; color: var(--text-secondary); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -479,7 +526,20 @@ input[type="file"]::file-selector-button {
               <span v-else>下载 & 设置</span>
             </button>
           </div>
-        </div>
+        
+          <!-- Timer -->
+          <div class="timer-row">
+            <label>⏱ 定时切换</label>
+            <input type="number" v-model.number="urlInterval" min="1" max="1440" placeholder="30" />
+            <label>分钟</label>
+            <button v-if="!urlTimerRunning" class="btn-timer btn-timer-start" @click="startUrlTimer">▶ 启动</button>
+            <button v-else class="btn-timer btn-timer-stop" @click="stopUrlTimer">⏹ 停止</button>
+            <span v-if="urlTimerRunning" class="timer-badge">运行中</span>
+          </div>
+          <div v-if="urlTimerRunning" class="timer-info">
+            每 {{ urlInterval }} 分钟自动更换壁纸 · Timer ID: {{ urlTimerId }}
+          </div>
+          </div>
       </section>
 
       <!-- GitHub Tab -->
@@ -514,6 +574,19 @@ input[type="file"]::file-selector-button {
             <span class="loading-spinner"></span> 加载中...
           </div>
         </div>
+      
+          <!-- Timer -->
+          <div class="timer-row">
+            <label>⏱ 定时切换</label>
+            <input type="number" v-model.number="ghInterval" min="1" max="1440" placeholder="30" />
+            <label>分钟</label>
+            <button v-if="!ghTimerRunning" class="btn-timer btn-timer-start" @click="startGhTimer">▶ 启动</button>
+            <button v-else class="btn-timer btn-timer-stop" @click="stopGhTimer">⏹ 停止</button>
+            <span v-if="ghTimerRunning" class="timer-badge">运行中</span>
+          </div>
+          <div v-if="ghTimerRunning" class="timer-info">
+            每 {{ ghInterval }} 分钟自动从 GitHub 更换壁纸
+          </div>
       </section>
 
       <!-- History Tab -->
@@ -577,6 +650,14 @@ createApp({
 
     // History
     const history = ref([]);
+
+    // Timer state
+    const urlInterval = ref(30);
+    const urlTimerRunning = ref(false);
+    const urlTimerId = ref('');
+    const ghInterval = ref(30);
+    const ghTimerRunning = ref(false);
+    const ghTimerId = ref('');
 
     const showToast = (message, type = 'success') => {
       toast.value = { message, type };
@@ -710,6 +791,75 @@ createApp({
       } catch {}
     };
 
+    
+    // --- Timer Functions ---
+    const startUrlTimer = async () => {
+      if (!imageUrl.value) { showToast('请先输入图片URL', 'error'); return; }
+      const body = {
+        source: 'url',
+        interval: urlInterval.value || 30,
+        url: imageUrl.value,
+        name: 'URL 定时切换'
+      };
+      try {
+        const r = await fetch('/api/timer/start', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        urlTimerId.value = d.timer.id;
+        urlTimerRunning.value = true;
+        showToast('定时切换已启动！');
+      } catch { showToast('启动失败', 'error'); }
+    };
+    const stopUrlTimer = async () => {
+      if (!urlTimerId.value) return;
+      try {
+        await fetch('/api/timer/stop', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ path: urlTimerId.value })
+        });
+      } catch {}
+      urlTimerRunning.value = false;
+      urlTimerId.value = '';
+    };
+
+    const startGhTimer = async () => {
+      if (!githubUrl.value) { showToast('请先输入GitHub仓库地址', 'error'); return; }
+      const body = {
+        source: 'github',
+        interval: ghInterval.value || 30,
+        repo_url: githubUrl.value,
+        path: ghPath.value || '',
+        branch: 'main',
+        name: 'GitHub 定时切换'
+      };
+      try {
+        const r = await fetch('/api/timer/start', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify(body)
+        });
+        const d = await r.json();
+        ghTimerId.value = d.timer.id;
+        ghTimerRunning.value = true;
+        showToast('GitHub 定时切换已启动！');
+      } catch { showToast('启动失败', 'error'); }
+    };
+    const stopGhTimer = async () => {
+      if (!ghTimerId.value) return;
+      try {
+        await fetch('/api/timer/stop', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ path: ghTimerId.value })
+        });
+      } catch {}
+      ghTimerRunning.value = false;
+      ghTimerId.value = '';
+    };
     const formatSize = (bytes) => {
       if (bytes < 1024) return bytes + ' B';
       if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
@@ -726,6 +876,8 @@ createApp({
       tabs, activeTab, currentWallpaper, imageUrl, githubUrl, loading, toast,
       localFile, ghItems, ghPath, ghBreadcrumb, ghLoading, history,
       setLocal, setUrl, browseGitHub, handleGhItem,
+      urlInterval, urlTimerRunning, urlTimerId, ghInterval, ghTimerRunning, ghTimerId,
+      startUrlTimer, stopUrlTimer, startGhTimer, stopGhTimer,
       fetchHistory, setFromHistory, deleteHistory, refreshCurrent, onImgError, formatSize,
     };
   }

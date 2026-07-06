@@ -1,4 +1,4 @@
-﻿# Wallpaper Switcher - GitHub Actions Build
+# Wallpaper Switcher - GitHub Actions Build
 # Builds Windows .exe via PyInstaller, auto-publishes Release on tag push.
 
 name: Build
@@ -49,7 +49,14 @@ jobs:
             --hidden-import clr `
             --hidden-import pythonnet `
             --collect-all webview `
-            --collect-all pythonnet `
+            --collect-all pythonnet 
+            --hidden-import pystray 
+            --hidden-import PIL 
+            --hidden-import PIL.Image 
+            --hidden-import PIL.ImageDraw 
+            --hidden-import PIL.ImageFont 
+            --collect-all pystray 
+            --collect-all PIL `
             app.py
 
       - name: Upload artifact
