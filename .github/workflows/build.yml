@@ -1,0 +1,56 @@
+﻿# Wallpaper Switcher - GitHub Actions Build
+# Builds Windows .exe via PyInstaller on every push and PR.
+
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller `
+            --name "WallpaperSwitcher" `
+            --onefile `
+            --windowed `
+            --icon "icon.ico" `
+            --clean `
+            --add-data "static;static" `
+            --hidden-import uvicorn.logging `
+            --hidden-import uvicorn.loops.auto `
+            --hidden-import uvicorn.protocols.http.auto `
+            --hidden-import uvicorn.protocols.websockets.auto `
+            --hidden-import uvicorn.lifespan.on `
+            --hidden-import webview `
+            --hidden-import webview.platforms.winforms `
+            --hidden-import clr `
+            --hidden-import pythonnet `
+            --collect-all webview `
+            --collect-all pythonnet `
+            app.py
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WallpaperSwitcher
+          path: dist/WallpaperSwitcher.exe
+          compression-level: 0

@@ -1,0 +1,23 @@
+﻿# Python virtual environment
+.venv/
+
+# PyInstaller build outputs
+build/
+dist/
+release/
+
+# PyInstaller spec (auto-generated)
+*.spec
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+Desktop.ini
