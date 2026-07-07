@@ -88,6 +88,19 @@ build.bat
 
 推送代码后自动触发，也可在 [Actions](https://github.com/SmallRain123/wallpaper-switcher/actions) 页面手动运行。构建产物可在对应 Run 的 Summary 页面下载。
 
+**自动发布**：推送 `v*` 标签（如 `v1.0.0`）自动创建 GitHub Release，包含可执行文件和校验和。
+
+```bash
+# 快速发布（推荐）
+release.bat
+
+# 或手动操作
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+📖 详细指南：[QUICKSTART.md](QUICKSTART.md) | [RELEASE.md](RELEASE.md)
+
 ## 💿 安装器
 
 `installer.iss` 为 Inno Setup 6 脚本：
