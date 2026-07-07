@@ -26,9 +26,22 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: 'pip'
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Extract version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            VERSION="dev-$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
 
       - name: Build with PyInstaller
         run: |
@@ -49,21 +62,36 @@ jobs:
             --hidden-import clr `
             --hidden-import pythonnet `
             --collect-all webview `
-            --collect-all pythonnet ` 
-            --hidden-import pystray ` 
-            --hidden-import PIL ` 
-            --hidden-import PIL.Image ` 
-            --hidden-import PIL.ImageDraw ` 
-            --hidden-import PIL.ImageFont ` 
-            --collect-all pystray ` 
+            --collect-all pythonnet `
+            --hidden-import pystray `
+            --hidden-import PIL `
+            --hidden-import PIL.Image `
+            --hidden-import PIL.ImageDraw `
+            --hidden-import PIL.ImageFont `
+            --collect-all pystray `
             --collect-all PIL `
             app.py
+
+      - name: Rename executable with version
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mv dist/WallpaperSwitcher.exe "dist/WallpaperSwitcher-${VERSION}.exe"
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum WallpaperSwitcher-*.exe > checksums.txt
+          cat checksums.txt
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: WallpaperSwitcher
-          path: dist/WallpaperSwitcher.exe
+          name: WallpaperSwitcher-${{ steps.version.outputs.version }}
+          path: |
+            dist/WallpaperSwitcher-*.exe
+            dist/checksums.txt
           compression-level: 0
 
       - name: Create Release
@@ -71,7 +99,29 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: "Wallpaper Switcher ${{ github.ref_name }}"
-          files: dist/WallpaperSwitcher.exe
+          body: |
+            ## 🎉 下载
+
+            **便携版**：下载 `WallpaperSwitcher-${{ github.ref_name }}.exe`，双击即用，无需安装。
+
+            ## ✨ 功能
+            - 📁 本地图片 — 选择本地图片文件直接设为壁纸
+            - 🔗 URL 直链 — 输入图片直链，自动下载并应用
+            - 🐙 GitHub 仓库 — 输入仓库地址，浏览目录树选择图片
+            - 🕐 历史记录 — 缩略图预览历史壁纸，支持一键恢复/删除
+
+            ## 📋 校验和
+            ```
+            $(cat dist/checksums.txt)
+            ```
+
+            ---
+
+            ${{ github.event.head_commit.message }}
+          files: |
+            dist/WallpaperSwitcher-*.exe
+            dist/checksums.txt
           draft: false
           prerelease: false
           generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
